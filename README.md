@@ -140,7 +140,7 @@ Each push destination in your nginx config appears as a row with three controls:
 
 > **Important:** Due to how nginx's graceful reload works, the config change does **not** take effect immediately for an active stream. The existing OBS connection keeps running in the old nginx worker and continues pushing to all destinations that were active when the stream started. The new config only applies when OBS reconnects.
 >
-> To apply the change immediately, use the **Drop Publisher** button (see below).
+> To apply the change immediately, use the **Force Reconnect** button (see below).
 
 ### Editing a Push Destination
 
@@ -148,9 +148,9 @@ Click the **✎** button on any push row to edit it. The row's current URL and l
 
 Make your changes and click **✓ Update** to save, or **✕ Cancel** to discard. Editing is implemented as a remove-then-add, so nginx reloads as part of the update — stats will temporarily go blank and auto-recover (see [Stats after a config change](#stats-after-a-config-change) below).
 
-### Drop Publisher
+### Force Reconnect
 
-The **⏹ Drop** button appears on each active stream card in the sidebar. Clicking it:
+The **⏹ Force reconnect** button appears on each active stream card in the sidebar. Clicking it:
 
 1. Terminates the OBS publisher connection via the nginx-rtmp control module
 2. OBS auto-reconnects (if auto-reconnect is enabled in OBS)
@@ -160,7 +160,7 @@ The **⏹ Drop** button appears on each active stream card in the sidebar. Click
 
 **Typical workflow to stop a push mid-stream:**
 1. Toggle the destination OFF in the dashboard
-2. Click **⏹ Drop** on the active stream card
+2. Click **⏹ Force reconnect** on the active stream card
 3. OBS reconnects within a few seconds — the disabled destination is no longer pushed to
 
 ### Adding a Push Destination
@@ -212,7 +212,7 @@ The dashboard handles this automatically:
 2. The dashboard retries fetching stats at 3 s, 8 s, 15 s, and 25 s intervals.
 3. Once your publisher reconnects to the new workers, stats restore on their own.
 
-For instant recovery, click **⏹ Drop** on the active stream card — OBS reconnects within a few seconds and stats return on the next poll.
+For instant recovery, click **⏹ Force reconnect** on the active stream card — OBS reconnects within a few seconds and stats return on the next poll.
 
 > **Note:** Toggling a push destination does **not** cause this, because toggle does not restart nginx workers.
 
@@ -458,9 +458,9 @@ This usually means the API returned an error. Check the **Activity Log** in the 
 The API runs `nginx -t` before every reload and will refuse to reload if the test fails. Open `/etc/nginx/nginx.conf` in a text editor and look for any syntax errors near the line that was toggled.
 
 **Disabling a push destination doesn't stop the stream immediately**
-This is expected. nginx's graceful reload lets the existing stream connection keep running. Toggle the destination off, then click **⏹ Drop** on the active stream card to force OBS to reconnect with the updated config. Make sure OBS has auto-reconnect enabled (Settings → Advanced → Network).
+This is expected. nginx's graceful reload lets the existing stream connection keep running. Toggle the destination off, then click **⏹ Force reconnect** on the active stream card to force OBS to reconnect with the updated config. Make sure OBS has auto-reconnect enabled (Settings → Advanced → Network).
 
-**Drop Publisher stops the stream but OBS doesn't reconnect**
+**Force Reconnect stops the stream but OBS doesn't reconnect**
 OBS auto-reconnect is not enabled. Go to **Settings → Advanced → Network** in OBS and set Reconnect Delay to 2s and Maximum Retries to 10 or higher. After enabling, manually stop and restart the stream once in OBS to activate the new setting.
 
 **Push destinations show as "Unknown"**
@@ -481,7 +481,7 @@ nginx-rtmp has no runtime API to add or remove push destinations. The toggle mec
 
 For RTMP, this means the existing OBS connection remains alive in the old worker process, which continues pushing to all destinations that were configured when the stream started — regardless of the config change. The new config only applies when OBS disconnects and establishes a fresh connection to a new worker.
 
-This is why the **⏹ Drop Publisher** button exists: it uses the nginx-rtmp control module (`/control/drop/publisher`) to actively terminate the OBS connection, triggering a reconnect that picks up the new worker and updated config.
+This is why the **⏹ Force Reconnect** button exists: it uses the nginx-rtmp control module (`/control/drop/publisher`) to actively terminate the OBS connection, triggering a reconnect that picks up the new worker and updated config.
 
 ---
 
