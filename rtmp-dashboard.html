@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RTMP Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #07090b;
+  --surface:   #0e1318;
+  --surface2:  #141c22;
+  --border:    #1d2d38;
+  --border2:   #253545;
+  --teal:      #00d4aa;
+  --teal-d:    #004d3d;
+  --teal-glow: rgba(0,212,170,0.18);
+  --amber:     #f5a623;
+  --amber-d:   #4d330a;
+  --red:       #f04060;
+  --red-d:     #4d0f1a;
+  --blue:      #4db8ff;
+  --muted:     #3a5060;
+  --text:      #b8cdd8;
+  --text-hi:   #e8f4f8;
+  --mono:      'JetBrains Mono', monospace;
+  --display:   'Syne', sans-serif;
+  --radius:    6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+/* Subtle grid texture */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(0,212,170,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,170,0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Layout ────────────────────────────────── */
+
+header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  background: rgba(7,9,11,0.95);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+.wordmark {
+  display: flex; align-items: center; gap: 12px;
+}
+
+.wordmark-icon {
+  width: 32px; height: 32px;
+  border: 1.5px solid var(--teal);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+
+.wordmark-icon::after {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 10px var(--teal);
+  animation: throb 2s ease-in-out infinite;
+}
+
+@keyframes throb {
+  0%,100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.2); opacity: 0.7; }
+}
+
+.wordmark h1 {
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--text-hi);
+}
+
+.wordmark span {
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  display: block;
+}
+
+.header-controls {
+  display: flex; align-items: center; gap: 12px;
+}
+
+.api-url-wrap {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.api-url-wrap label {
+  font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase;
+}
+
+input.url-input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  outline: none;
+  width: 220px;
+  transition: border-color .15s;
+}
+input.url-input:focus { border-color: var(--teal); }
+
+.conn-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: all .3s;
+}
+.conn-pill.ok  { border-color: var(--teal); color: var(--teal); background: var(--teal-d); }
+.conn-pill.err { border-color: var(--red);  color: var(--red);  background: var(--red-d); }
+
+.conn-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+}
+.conn-pill.ok .conn-dot { animation: throb 1.5s infinite; }
+
+/* ── Main layout ───────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  min-height: calc(100vh - 56px);
+  position: relative; z-index: 1;
+}
+
+.main-col { padding: 24px; border-right: 1px solid var(--border); }
+.side-col  { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+
+/* ── Section title ─────────────────────────── */
+
+.sec-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.sec-title {
+  font-family: var(--display);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Server block ──────────────────────────── */
+
+.server-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.server-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.server-header:hover { background: #1a252f; }
+
+.port-badge {
+  font-family: var(--display);
+  font-size: 14px; font-weight: 800;
+  color: var(--teal);
+  min-width: 52px;
+}
+
+.server-meta {
+  flex: 1;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.server-live-count {
+  font-size: 11px;
+}
+
+.live-count-val {
+  color: var(--teal);
+  font-weight: 600;
+}
+
+.chevron {
+  color: var(--muted);
+  transition: transform .2s;
+  font-size: 10px;
+}
+
+.server-block.collapsed .chevron { transform: rotate(-90deg); }
+.server-block.collapsed .server-body { display: none; }
+
+.server-body { padding: 12px 16px 16px; }
+
+/* ── App block ─────────────────────────────── */
+
+.app-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.app-label::after {
+  content: '';
+  flex: 1; height: 1px;
+  background: var(--border);
+}
+
+/* ── Push row ──────────────────────────────── */
+
+.push-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+  background: var(--bg);
+  transition: border-color .15s, background .15s;
+}
+
+.push-row:hover { border-color: var(--border2); }
+.push-row.active { border-color: var(--teal-d); background: rgba(0,212,170,0.04); }
+.push-row.inactive { opacity: 0.5; }
+
+.push-toggle {
+  position: relative;
+  width: 34px; height: 18px;
+  flex-shrink: 0;
+}
+.push-toggle input { display: none; }
+.push-toggle-track {
+  position: absolute; inset: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 18px;
+  cursor: pointer;
+  transition: background .2s, border-color .2s;
+}
+.push-toggle-track::before {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px;
+  top: 2px; left: 2px;
+  background: var(--muted);
+  border-radius: 50%;
+  transition: transform .2s, background .2s;
+}
+.push-toggle input:checked + .push-toggle-track { background: var(--teal-d); border-color: var(--teal); }
+.push-toggle input:checked + .push-toggle-track::before { transform: translateX(16px); background: var(--teal); }
+
+.push-toggle input:disabled + .push-toggle-track { cursor: wait; opacity: 0.5; }
+
+.push-info { min-width: 0; }
+
+.push-label {
+  font-size: 12px; font-weight: 600;
+  color: var(--text-hi);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.push-url {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.push-status {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.push-status.on  { background: var(--teal-d); color: var(--teal); border: 1px solid var(--teal); }
+.push-status.off { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+.push-status.busy { background: var(--amber-d); color: var(--amber); border: 1px solid var(--amber); animation: blink .8s step-end infinite; }
+
+@keyframes blink { 50% { opacity: 0.3; } }
+
+.push-del, .push-edit {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  width: 24px; height: 24px;
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.push-del:hover  { border-color: var(--red);   color: var(--red);   background: var(--red-d); }
+.push-edit:hover { border-color: var(--amber);  color: var(--amber); background: var(--amber-d); }
+.push-row.editing { border-color: var(--amber); background: rgba(245,166,35,0.04); }
+
+/* Add push form */
+.add-push-form {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.add-push-form input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color .15s;
+}
+.add-push-form input:focus { border-color: var(--teal); }
+.add-push-form input::placeholder { color: var(--muted); }
+
+/* ── Buttons ───────────────────────────────── */
+
+.btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn-teal  { border-color: var(--teal);  color: var(--teal);  background: transparent; }
+.btn-teal:hover  { background: var(--teal); color: #000; }
+.btn-ghost { border-color: var(--border); color: var(--muted); background: transparent; }
+.btn-ghost:hover { border-color: var(--border2); color: var(--text); }
+.btn-red   { border-color: var(--red);   color: var(--red);   background: transparent; }
+.btn-red:hover   { background: var(--red); color: #fff; }
+.btn-amber { border-color: var(--amber); color: var(--amber); background: transparent; }
+.btn-amber:hover { background: var(--amber); color: #000; }
+.btn-sm { padding: 4px 10px; font-size: 10px; }
+
+/* ── Stats sidebar ─────────────────────────── */
+
+.widget {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.widget-title {
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.stat-cell {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+}
+.stat-cell .val {
+  font-family: var(--display);
+  font-size: 20px; font-weight: 800;
+  color: var(--teal);
+  display: block; line-height: 1;
+}
+.stat-cell .lbl {
+  font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); margin-top: 4px; display: block;
+}
+
+/* Stream live cards */
+.live-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  transition: border-color .3s;
+}
+.live-card.streaming { border-left-color: var(--teal); }
+.live-card.recording { border-left-color: var(--red); }
+
+.live-card-name {
+  font-size: 12px; font-weight: 600;
+  color: var(--text-hi);
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+.live-badge {
+  font-size: 8px; letter-spacing: 2px; font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px; border-radius: 2px;
+}
+.live-badge.on  { background: var(--teal-d); color: var(--teal); border: 1px solid var(--teal); animation: throb 2s infinite; }
+.live-badge.rec { background: var(--red-d);  color: var(--red);  border: 1px solid var(--red);  animation: blink 1s step-end infinite; }
+.live-badge.off { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+.live-card-meta {
+  display: flex; gap: 14px; margin-top: 6px; flex-wrap: wrap;
+}
+.live-card-meta span { font-size: 10px; color: var(--muted); }
+.live-card-meta span b { color: var(--text); font-weight: 400; }
+
+/* Log */
+#log {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  height: 160px;
+  overflow-y: auto;
+  display: flex; flex-direction: column-reverse; gap: 1px;
+}
+#log::-webkit-scrollbar { width: 3px; }
+#log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.log-line { font-size: 10px; line-height: 1.6; }
+.log-line .ts { color: var(--muted); }
+.log-line .info { color: var(--blue); }
+.log-line .ok   { color: var(--teal); }
+.log-line .warn { color: var(--amber); }
+.log-line .err  { color: var(--red); }
+
+/* Spinner */
+.spin {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: rotate .7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes rotate { to { transform: rotate(360deg); } }
+
+/* Reload indicator */
+.reload-toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 200;
+  background: var(--surface);
+  border: 1px solid var(--teal);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-size: 11px;
+  color: var(--teal);
+  box-shadow: 0 4px 20px rgba(0,212,170,0.2);
+  transform: translateY(60px);
+  opacity: 0;
+  transition: all .3s;
+}
+.reload-toast.show { transform: translateY(0); opacity: 1; }
+
+/* Empty */
+.empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+.empty .icon { font-size: 32px; margin-bottom: 10px; opacity: 0.4; }
+.empty p { font-size: 11px; line-height: 1.8; }
+
+/* Confirm overlay on delete */
+.del-confirm {
+  display: none;
+  background: var(--red-d);
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-top: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.del-confirm.show { display: flex; }
+.del-confirm span { font-size: 11px; color: var(--red); }
+
+/* Secret input */
+.secret-wrap {
+  display: flex; gap: 6px; align-items: center;
+}
+input.secret-input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  outline: none;
+  width: 120px;
+  transition: border-color .15s;
+}
+input.secret-input:focus { border-color: var(--teal); }
+
+/* Delete server button in header */
+.srv-del {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .5px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.srv-del:hover { border-color: var(--red); color: var(--red); background: var(--red-d); }
+
+/* Add-server panel */
+.add-server-panel { margin-top: 12px; }
+.add-server-fields {
+  display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.add-server-field-label {
+  font-size: 10px; color: var(--muted); letter-spacing: 1px;
+  text-transform: uppercase; margin-bottom: 4px;
+}
+.add-server-input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color .15s;
+}
+.add-server-input:focus { border-color: var(--teal); }
+.add-server-input::placeholder { color: var(--muted); }
+.add-server-input-port { width: 90px; }
+.add-server-input-app  { width: 110px; }
+.add-server-actions { display: flex; gap: 8px; }
+.add-server-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-top: 8px;
+}
+.url-hint {
+  font-size: 11px; color: var(--muted);
+  margin-bottom: 14px; line-height: 2.2;
+}
+.url-hint code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 10px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text);
+}
+.hl-port { color: var(--amber); font-style: normal; font-weight: 600; }
+.hl-app  { color: var(--blue);  font-style: normal; font-weight: 600; }
+
+/* Modal */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.65);
+  display: none; align-items: center; justify-content: center;
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  max-width: 420px; width: 90%;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+.modal-title {
+  font-family: var(--display);
+  font-size: 13px; font-weight: 800; letter-spacing: 1px;
+  color: var(--text-hi);
+  margin-bottom: 14px;
+}
+.modal-body { font-size: 12px; color: var(--text); line-height: 1.8; margin-bottom: 20px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  .side-col { border-top: 1px solid var(--border); }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">
+    <div class="wordmark-icon"></div>
+    <div>
+      <h1>RTMP Control</h1>
+      <span>nginx-rtmp-module</span>
+    </div>
+  </div>
+  <div class="header-controls">
+    <div class="api-url-wrap">
+      <label>API</label>
+      <input class="url-input" id="api-url" placeholder="http://server:8088">
+    </div>
+    <div class="secret-wrap">
+      <label style="font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;">Token</label>
+      <input class="secret-input" id="api-secret" type="password" placeholder="optional" onkeydown="if(event.key==='Enter') loadAll()">
+    </div>
+    <button class="btn btn-teal btn-sm" onclick="loadAll()">↻ Load</button>
+    <div class="conn-pill" id="conn-pill">
+      <div class="conn-dot"></div>
+      <span id="conn-label">disconnected</span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+
+  <div class="main-col">
+    <div class="sec-head">
+      <span class="sec-title">RTMP Servers &amp; Push Destinations</span>
+      <span id="refresh-label" style="font-size:10px;color:var(--muted)"></span>
+    </div>
+    <div id="servers-container">
+      <div class="empty">
+        <div class="icon">📡</div>
+        <p>Enter your API server URL above and click <b>Load</b>.<br>
+        Make sure <code>rtmp-api.py</code> is running with <code>sudo</code>.</p>
+      </div>
+    </div>
+
+    <div class="add-server-panel">
+      <button type="button" class="btn btn-ghost btn-sm" id="add-server-toggle" onclick="toggleAddServer()">＋ Add Port Group</button>
+      <div id="add-server-form" class="add-server-form" style="display:none">
+        <div class="url-hint">
+          Point OBS (or any RTMP source) at:<br>
+          <code>rtmp://your-server:<em class="hl-port" id="preview-port">PORT</em>/<em class="hl-app" id="preview-app">live</em>/stream-key</code><br>
+          The <em class="hl-port">port</em> and <em class="hl-app">app name</em> you enter below appear in this URL.
+          nginx-rtmp then relays the stream to all active push destinations in the group.
+        </div>
+        <div class="add-server-fields">
+          <div>
+            <div class="add-server-field-label">Port <em class="hl-port">●</em></div>
+            <input type="number" id="new-server-port" placeholder="1936" min="1" max="65535"
+              class="add-server-input add-server-input-port"
+              oninput="document.getElementById('preview-port').textContent=this.value||'PORT'"
+              onkeydown="if(event.key==='Enter')addServer()">
+          </div>
+          <div>
+            <div class="add-server-field-label">App name <em class="hl-app">●</em></div>
+            <input type="text" id="new-server-app" placeholder="live" value="live"
+              class="add-server-input add-server-input-app"
+              oninput="document.getElementById('preview-app').textContent=this.value||'live'"
+              onkeydown="if(event.key==='Enter')addServer()">
+          </div>
+        </div>
+        <div class="add-server-actions">
+          <button type="button" class="btn btn-teal btn-sm" onclick="addServer()">＋ Create</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="toggleAddServer()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side-col">
+
+    <div class="widget">
+      <div class="widget-title">Live Stats</div>
+      <div class="stat-grid">
+        <div class="stat-cell"><span class="val" id="s-streams">—</span><span class="lbl">Streams </span></div>
+        <div class="stat-cell"><span class="val" id="s-clients">—</span><span class="lbl">Viewers</span></div>
+        <div class="stat-cell"><span class="val" id="s-bw-in">—</span><span class="lbl">Bandwidth In</span></div>
+        <div class="stat-cell"><span class="val" id="s-bw-out">—</span><span class="lbl">Bandwidth Out</span></div>
+      </div>
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">Active Streams</div>
+      <div id="live-streams">
+        <div class="empty" style="padding:20px"><p style="font-size:11px">No stat data yet</p></div>
+      </div>
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">Auto-refresh</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <span style="font-size:11px;">Refresh stats every</span>
+        <select id="refresh-interval" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:4px;outline:none;">
+          <option value="0">Off</option>
+          <option value="5" selected>5s</option>
+          <option value="10">10s</option>
+          <option value="30">30s</option>
+        </select>
+      </div>
+      <button class="btn btn-amber btn-sm" onclick="reloadNginx()" style="width:100%;justify-content:center;">⟳ Reload nginx now</button>
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">Activity Log</div>
+      <div id="log"></div>
+    </div>
+
+  </aside>
+</div>
+
+<!-- Delete server modal -->
+<div class="modal-overlay" id="del-server-modal" onclick="if(event.target===this)closeServerModal()">
+  <div class="modal-box">
+    <div class="modal-title">Delete Port Group</div>
+    <div class="modal-body" id="del-server-msg"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeServerModal()">Cancel</button>
+      <button type="button" class="btn btn-red btn-sm" onclick="confirmDelServer()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="reload-toast" id="toast"></div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let configData       = null;
+let statsTimer       = null;
+let pendingToggles   = new Set(); // line numbers currently being toggled
+let editState        = null;      // { lineNo, port, appName } while editing a push
+let deleteServerPort = null;      // port being confirmed for deletion
+let collapsedServers = new Set(); // IDs of collapsed server blocks, persisted to localStorage
+try { const _cs = localStorage.getItem('rtmp-collapsed'); if (_cs) collapsedServers = new Set(JSON.parse(_cs)); } catch(_) {}
+
+function apiBase() { return (document.getElementById('api-url').value || window.location.origin).replace(/\/+$/,''); }
+function apiToken() { return document.getElementById('api-secret').value || ''; }
+
+function apiFetch(path, opts={}) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = apiToken();
+  if (token) headers['X-API-Token'] = token;
+  return fetch(apiBase() + path, { headers, ...opts });
+}
+
+// ─── Logging ──────────────────────────────────────────────────────────────────
+function log(msg, type='info') {
+  const el  = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  const ts = new Date().toLocaleTimeString('en-GB',{hour12:false});
+  div.innerHTML = `<span class="ts">[${ts}]</span> <span class="${type}">${esc(msg)}</span>`;
+  el.prepend(div);
+  if (el.children.length > 100) el.removeChild(el.lastChild);
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toast(msg, dur=3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), dur);
+}
+
+// ─── Connection ───────────────────────────────────────────────────────────────
+function setConn(ok, label) {
+  const pill = document.getElementById('conn-pill');
+  pill.className = 'conn-pill ' + (ok ? 'ok' : 'err');
+  document.getElementById('conn-label').textContent = label;
+}
+
+// ─── Load everything (initial load) ───────────────────────────────────────────
+async function loadAll() {
+  log('Loading config from API…');
+  try {
+    // Fetch config and stats in parallel
+    const [r] = await Promise.all([apiFetch('/api/config'), fetchStats()]);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    configData = data;
+    setConn(true, 'connected');
+    const tok = apiToken();
+    if (tok) try { localStorage.setItem('rtmp-api-token', tok); } catch(_) {}
+    renderServers(data.servers);
+    log(`Loaded ${data.servers.length} server(s)`, 'ok');
+  } catch(e) {
+    setConn(false, 'error');
+    log(`Config load failed: ${e.message}`, 'err');
+    document.getElementById('servers-container').innerHTML = `<div class="empty"><div class="icon">⚠️</div><p>${esc(e.message)}<br><br>Is <code>rtmp-api.py</code> running with sudo?</p></div>`;
+  }
+}
+
+// ─── Reload config only (after mutations) ─────────────────────────────────────
+async function reloadConfig() {
+  try {
+    const r = await apiFetch('/api/config');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    configData = data;
+    // Snapshot edit state — renderServers wipes the DOM, then we restore it
+    const pendingEdit = editState ? { ...editState } : null;
+    editState = null;
+    renderServers(data.servers);
+    // Re-apply edit state so the user doesn't lose their in-progress edit
+    if (pendingEdit) editPush(pendingEdit.lineNo, pendingEdit.port, pendingEdit.appName);
+  } catch(e) {
+    log(`Config reload failed: ${e.message}`, 'err');
+  }
+}
+
+// ─── Render config ────────────────────────────────────────────────────────────
+function renderServers(servers) {
+  const container = document.getElementById('servers-container');
+  container.innerHTML = '';
+
+  if (!servers || servers.length === 0) {
+    container.innerHTML = '<div class="empty"><div class="icon">🔌</div><p>No RTMP server blocks found in nginx.conf</p></div>';
+    return;
+  }
+
+  servers.forEach((srv, si) => {
+    const block = document.createElement('div');
+    block.className = 'server-block';
+    block.id = `srv-${srv.port}`;
+
+    const activeCount = srv.apps.reduce((n, a) => n + a.pushes.filter(p=>p.active).length, 0);
+    const totalCount  = srv.apps.reduce((n, a) => n + a.pushes.length, 0);
+
+    block.innerHTML = `
+      <div class="server-header" onclick="toggleCollapse('srv-${srv.port}')">
+        <span class="port-badge">:${srv.port}</span>
+        <div class="server-meta">
+          ← port number to send the stream to. Default is 1935
+        </div>
+        <div class="server-live-count">
+          <span class="live-count-val" id="live-ct-${srv.port}">?</span> live
+          &nbsp;·&nbsp; ${activeCount}/${totalCount} pushes active
+        </div>
+        <button type="button" class="srv-del" title="Delete port group :${srv.port}"
+          onclick="event.stopPropagation();showDelServerModal(${srv.port},${totalCount})">✕ Delete</button>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="server-body" id="srv-body-${srv.port}"></div>
+    `;
+
+    container.appendChild(block);
+
+    const body = document.getElementById(`srv-body-${srv.port}`);
+    srv.apps.forEach(ap => {
+      renderApp(body, srv.port, ap);
+    });
+  });
+
+  // Restore collapse state after rebuild
+  collapsedServers.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('collapsed');
+  });
+}
+
+function renderApp(container, port, ap) {
+  const wrap = document.createElement('div');
+  wrap.id = `app-${port}-${ap.name}`;
+
+  const pushesHtml = ap.pushes.length === 0
+    ? '<p style="font-size:11px;color:var(--muted);padding:6px 0;">No push destinations configured</p>'
+    : ap.pushes.map(p => pushRowHtml(p, port, ap.name)).join('');
+
+  wrap.innerHTML = `
+    <div class="app-label">application / ${esc(ap.name)}</div>
+    <div id="pushes-${port}-${ap.name}">${pushesHtml}</div>
+    <div class="add-push-form">
+      <input type="text" placeholder="rtmp://destination-url/app/key" id="new-url-${port}-${ap.name}">
+      <input type="text" placeholder="Label" id="new-label-${port}-${ap.name}" style="width:100px">
+      <button class="btn btn-ghost btn-sm" id="cancel-edit-${port}-${ap.name}" style="display:none;padding:6px 8px" onclick="cancelEdit()">✕</button>
+      <button class="btn btn-teal btn-sm" id="add-btn-${port}-${ap.name}" data-port="${port}" data-app="${esc(ap.name)}" onclick="addPush(+this.dataset.port, this.dataset.app)">+ Add</button>
+    </div>
+  `;
+  container.appendChild(wrap);
+}
+
+function pushRowHtml(p, port, appName) {
+  const stripped = p.url.replace(/\?.*/, '');
+  const urlShort = stripped.substring(0, 50) + (stripped.length > 50 ? '…' : '');
+  const busy = pendingToggles.has(p.line);
+  return `
+    <div class="push-row ${p.active ? 'active' : 'inactive'}" id="push-row-${p.line}">
+      <label class="push-toggle">
+        <input type="checkbox" ${p.active ? 'checked' : ''} ${busy ? 'disabled' : ''}
+          onchange="togglePush(${p.line}, this.checked, this)">
+        <span class="push-toggle-track"></span>
+      </label>
+      <div class="push-info">
+        <div class="push-label">${esc(p.label)}</div>
+        <div class="push-url" title="${esc(p.url)}">${esc(urlShort)}</div>
+      </div>
+      <span class="push-status ${busy ? 'busy' : p.active ? 'on' : 'off'}" id="push-status-${p.line}">
+        ${busy ? '…' : p.active ? 'ON' : 'OFF'}
+      </span>
+      <button class="push-edit" title="Edit destination"
+        data-line="${p.line}" data-port="${port}" data-app="${esc(appName)}"
+        onclick="editPush(+this.dataset.line, +this.dataset.port, this.dataset.app)">✎</button>
+      <button class="push-del" title="Remove permanently" onclick="deletePush(${p.line})">✕</button>
+    </div>
+    <div class="del-confirm" id="del-confirm-${p.line}">
+      <span>Remove "${esc(p.label)}" permanently?</span>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="cancelDel(${p.line})">Cancel</button>
+        <button class="btn btn-red btn-sm" onclick="confirmDel(${p.line})">Remove</button>
+      </div>
+    </div>
+  `;
+}
+
+function toggleCollapse(id) {
+  const el = document.getElementById(id);
+  el.classList.toggle('collapsed');
+  if (el.classList.contains('collapsed')) {
+    collapsedServers.add(id);
+  } else {
+    collapsedServers.delete(id);
+  }
+  try { localStorage.setItem('rtmp-collapsed', JSON.stringify([...collapsedServers])); } catch(_) {}
+}
+
+// ─── Toggle push ──────────────────────────────────────────────────────────────
+async function togglePush(lineNo, makeActive, checkbox) {
+  if (pendingToggles.has(lineNo)) return;
+  pendingToggles.add(lineNo);
+
+  const statusEl = document.getElementById(`push-status-${lineNo}`);
+  const rowEl    = document.getElementById(`push-row-${lineNo}`);
+  if (statusEl) { statusEl.className = 'push-status busy'; statusEl.textContent = '…'; }
+  if (checkbox)  checkbox.disabled = true;
+
+  log(`${makeActive ? 'Enabling' : 'Disabling'} push at config line ${lineNo}…`);
+
+  try {
+    const r = await apiFetch('/api/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ line: lineNo, active: makeActive })
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+
+    log(`${makeActive ? 'Enabled' : 'Disabled'} — ${data.message}`, 'ok');
+    toast('✓ Config saved — click ⟳ Reload or ⏹ Drop to apply', 5000);
+
+    // Clear pending state BEFORE re-render so rows render with correct state, not busy
+    pendingToggles.delete(lineNo);
+    await reloadConfig();
+
+  } catch(e) {
+    log(`Toggle failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+    // Revert checkbox
+    if (checkbox) { checkbox.checked = !makeActive; checkbox.disabled = false; }
+    if (statusEl) {
+      statusEl.className = `push-status ${!makeActive ? 'on' : 'off'}`;
+      statusEl.textContent = !makeActive ? 'ON' : 'OFF';
+    }
+  } finally {
+    pendingToggles.delete(lineNo); // no-op on success; cleans up on error
+  }
+}
+
+// ─── Add push ─────────────────────────────────────────────────────────────────
+async function addPush(port, appName) {
+  if (editState && editState.port === port && editState.appName === appName) {
+    return updatePush(port, appName);
+  }
+
+  const urlEl   = document.getElementById(`new-url-${port}-${appName}`);
+  const labelEl = document.getElementById(`new-label-${port}-${appName}`);
+  const url     = urlEl.value.trim();
+  const label   = labelEl.value.trim();
+
+  if (!url) { log('Enter a destination URL', 'warn'); return; }
+  if (!url.startsWith('rtmp')) { log('URL must start with rtmp:// or rtmps://', 'warn'); return; }
+
+  log(`Adding push: ${label || url}`);
+  try {
+    const r = await apiFetch('/api/add_push', {
+      method: 'POST',
+      body: JSON.stringify({ server_port: port, app_name: appName, url, label })
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    log(`Added — ${data.message}`, 'ok');
+    toast('✓ Push destination added');
+    scheduleStatRecovery();
+    urlEl.value = ''; labelEl.value = '';
+    await reloadConfig();
+  } catch(e) {
+    log(`Add failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+  }
+}
+
+// ─── Edit push ────────────────────────────────────────────────────────────────
+function editPush(lineNo, port, appName) {
+  // Find push data from configData
+  const srv  = configData?.servers.find(s => s.port === port);
+  const app  = srv?.apps.find(a => a.name === appName);
+  const push = app?.pushes.find(p => p.line === lineNo);
+  if (!push) return;
+
+  // Cancel any existing edit first
+  if (editState) cancelEdit();
+
+  editState = { lineNo, port, appName };
+
+  document.getElementById(`new-url-${port}-${appName}`).value   = push.url;
+  document.getElementById(`new-label-${port}-${appName}`).value = push.label;
+
+  const btn = document.getElementById(`add-btn-${port}-${appName}`);
+  btn.textContent = '✓ Update';
+  btn.classList.replace('btn-teal', 'btn-amber');
+
+  document.getElementById(`cancel-edit-${port}-${appName}`).style.display = 'inline-flex';
+  document.getElementById(`push-row-${lineNo}`).classList.add('editing');
+  document.getElementById(`new-url-${port}-${appName}`).focus();
+}
+
+function cancelEdit() {
+  if (!editState) return;
+  const { lineNo, port, appName } = editState;
+
+  document.getElementById(`new-url-${port}-${appName}`).value   = '';
+  document.getElementById(`new-label-${port}-${appName}`).value = '';
+
+  const btn = document.getElementById(`add-btn-${port}-${appName}`);
+  btn.textContent = '+ Add';
+  btn.classList.replace('btn-amber', 'btn-teal');
+
+  document.getElementById(`cancel-edit-${port}-${appName}`).style.display = 'none';
+  const row = document.getElementById(`push-row-${lineNo}`);
+  if (row) row.classList.remove('editing');
+
+  editState = null;
+}
+
+async function updatePush(port, appName) {
+  const { lineNo } = editState;
+  const urlEl   = document.getElementById(`new-url-${port}-${appName}`);
+  const labelEl = document.getElementById(`new-label-${port}-${appName}`);
+  const url     = urlEl.value.trim();
+  const label   = labelEl.value.trim();
+
+  if (!url) { log('Enter a destination URL', 'warn'); return; }
+  if (!url.startsWith('rtmp')) { log('URL must start with rtmp:// or rtmps://', 'warn'); return; }
+
+  log(`Updating push at line ${lineNo}…`);
+  try {
+    // Remove old entry then add updated one
+    const r1 = await apiFetch('/api/remove_push', {
+      method: 'POST',
+      body: JSON.stringify({ line: lineNo })
+    });
+    const d1 = await r1.json();
+    if (!r1.ok || d1.error) throw new Error(d1.error || `HTTP ${r1.status}`);
+
+    const r2 = await apiFetch('/api/add_push', {
+      method: 'POST',
+      body: JSON.stringify({ server_port: port, app_name: appName, url, label })
+    });
+    const d2 = await r2.json();
+    if (!r2.ok || d2.error) throw new Error(d2.error || `HTTP ${r2.status}`);
+
+    log(`Updated — ${d2.message}`, 'ok');
+    toast('✓ Push destination updated');
+    scheduleStatRecovery();
+    editState = null; // clear before reload so DOM resets cleanly
+    await reloadConfig();
+  } catch(e) {
+    log(`Update failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+  }
+}
+
+// ─── Stat recovery after nginx reload ────────────────────────────────────────
+function scheduleStatRecovery() {
+  // Show an actionable hint immediately — processStats() will overwrite this
+  // naturally once a polling fetch finds active streams again
+  document.getElementById('live-streams').innerHTML =
+    `<div class="empty" style="padding:14px">
+       <p style="font-size:10px;color:var(--amber)">
+         nginx reloaded — stream stats will be temporarily empty until your publisher
+         reconnects to the new workers.<br><br>
+         Use <b>⏹ Force Reconnect</b> on your active stream to restore live data instantly.
+       </p>
+     </div>`;
+  // Polling burst: try to recover stats at +3s, +8s, +15s, +25s
+  [3000, 8000, 15000, 25000].forEach(ms => setTimeout(fetchStats, ms));
+}
+
+// ─── Add / delete server (port group) ────────────────────────────────────────
+function toggleAddServer() {
+  const form = document.getElementById('add-server-form');
+  const btn  = document.getElementById('add-server-toggle');
+  const open = form.style.display === 'none';
+  form.style.display = open ? 'block' : 'none';
+  btn.textContent    = open ? '✕ Cancel' : '＋ Add Port Group';
+  if (open) document.getElementById('new-server-port').focus();
+}
+
+async function addServer() {
+  const portEl = document.getElementById('new-server-port');
+  const appEl  = document.getElementById('new-server-app');
+  const port   = parseInt(portEl.value, 10);
+  const app    = appEl.value.trim() || 'live';
+
+  if (!port || port < 1 || port > 65535) { log('Enter a valid port number (1–65535)', 'warn'); return; }
+
+  log(`Creating port group :${port} / ${app}…`);
+  try {
+    const r = await apiFetch('/api/add_server', {
+      method: 'POST',
+      body: JSON.stringify({ port, app_name: app })
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    log(`Port group :${port} created — ${data.message}`, 'ok');
+    toast(`✓ Port group :${port} added`);
+    scheduleStatRecovery();
+    portEl.value = ''; appEl.value = 'live';
+    document.getElementById('preview-port').textContent = 'PORT';
+    document.getElementById('preview-app').textContent  = 'live';
+    toggleAddServer();
+    await reloadConfig();
+  } catch(e) {
+    log(`Add port group failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+  }
+}
+
+function showDelServerModal(port, pushCount) {
+  deleteServerPort = port;
+  const srv = configData?.servers.find(s => s.port === port);
+  const appList = srv ? srv.apps.map(a => `<b>${esc(a.name)}</b>`).join(', ') : '—';
+  document.getElementById('del-server-msg').innerHTML =
+    `Delete port group <span style="color:var(--amber)">:${port}</span>?<br><br>` +
+    `Applications: ${appList}<br>` +
+    `<span style="color:var(--red)">This will permanently remove the entire server block` +
+    ` and all ${pushCount} push destination${pushCount !== 1 ? 's' : ''} configured within it.</span>`;
+  document.getElementById('del-server-modal').classList.add('show');
+}
+
+function closeServerModal() {
+  document.getElementById('del-server-modal').classList.remove('show');
+  deleteServerPort = null;
+}
+
+async function confirmDelServer() {
+  if (deleteServerPort === null) return;
+  const port = deleteServerPort;
+  closeServerModal();
+  log(`Deleting port group :${port}…`, 'warn');
+  try {
+    const r = await apiFetch('/api/remove_server', {
+      method: 'POST',
+      body: JSON.stringify({ port })
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    log(`Port group :${port} deleted — ${data.message}`, 'ok');
+    toast(`✓ Port group :${port} removed`);
+    scheduleStatRecovery();
+    await reloadConfig();
+  } catch(e) {
+    log(`Delete port group failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+  }
+}
+
+// ─── Delete push ──────────────────────────────────────────────────────────────
+function deletePush(lineNo) {
+  document.getElementById(`del-confirm-${lineNo}`).classList.add('show');
+}
+function cancelDel(lineNo) {
+  document.getElementById(`del-confirm-${lineNo}`).classList.remove('show');
+}
+async function confirmDel(lineNo) {
+  log(`Removing push at line ${lineNo}…`, 'warn');
+  try {
+    const r = await apiFetch('/api/remove_push', {
+      method: 'POST',
+      body: JSON.stringify({ line: lineNo })
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    log(`Removed — ${data.message}`, 'ok');
+    toast('✓ Push destination removed');
+    scheduleStatRecovery();
+    await reloadConfig();
+  } catch(e) {
+    log(`Remove failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+  }
+}
+
+// ─── Reload nginx manually ────────────────────────────────────────────────────
+async function reloadNginx() {
+  log('Reloading nginx…');
+  try {
+    const r = await apiFetch('/api/reload', { method: 'POST' });
+    const data = await r.json();
+    log(data.message, data.reloaded ? 'ok' : 'err');
+    toast(data.reloaded ? '✓ nginx reloaded' : '✗ ' + data.message, 4000);
+  } catch(e) {
+    log(`Reload failed: ${e.message}`, 'err');
+  }
+}
+
+// ─── Drop publisher ───────────────────────────────────────────────────────────
+async function dropPublisher(appName, name) {
+  log(`Dropping publisher ${appName}/${name}…`, 'warn');
+  try {
+    const r = await apiFetch('/api/drop_publisher', {
+      method: 'POST',
+      body: JSON.stringify({ app: appName, name })
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    log('Publisher dropped — OBS will reconnect with updated config', 'ok');
+    toast('✓ Publisher dropped — OBS will reconnect');
+    setTimeout(fetchStats, 2000);
+  } catch(e) {
+    log(`Drop failed: ${e.message}`, 'err');
+    toast('✗ ' + e.message, 4000);
+  }
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+async function fetchStats() {
+  try {
+    const r = await apiFetch('/api/stat');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const text = await r.text();
+    const xml  = new DOMParser().parseFromString(text, 'text/xml');
+    processStats(xml);
+  } catch(e) {
+    // silent fail — stat is optional
+    document.getElementById('live-streams').innerHTML =
+      `<div class="empty" style="padding:14px"><p style="font-size:10px">Stat unavailable:<br>${esc(e.message)}</p></div>`;
+  }
+}
+
+function processStats(xml) {
+  let totalStreams = 0, totalClients = 0, totalBwIn = 0, totalBwOut = 0;
+  const liveCards = [];
+  const portLiveCount = {};
+
+  xml.querySelectorAll('server').forEach((xmlSrv, si) => {
+    const configSrv = configData?.servers[si];
+    xmlSrv.querySelectorAll('application').forEach(app => {
+      const appName = app.querySelector(':scope > name')?.textContent || '?';
+      app.querySelectorAll('live > stream').forEach(stream => {
+        const name    = stream.querySelector(':scope > name')?.textContent || '';
+        const bwIn    = parseInt(stream.querySelector('bw_in')?.textContent  || 0);
+        const bwOut   = parseInt(stream.querySelector('bw_out')?.textContent || 0);
+        const clients = parseInt(stream.querySelector('nclients')?.textContent || 0);
+        const time    = parseInt(stream.querySelector('time')?.textContent   || 0);
+        const active  = stream.querySelector('active') !== null || bwIn > 0;
+        const rec     = stream.querySelector('recording') !== null;
+
+        if (active) {
+          totalStreams++;
+          totalBwIn  += bwIn;
+          totalBwOut += bwOut;
+          totalClients += clients;
+          if (configSrv) {
+            portLiveCount[configSrv.port] = (portLiveCount[configSrv.port] || 0) + 1;
+          }
+        }
+
+        liveCards.push({ appName, name, bwIn, bwOut, clients, time, active, rec });
+      });
+    });
+  });
+
+  document.getElementById('s-streams').textContent = totalStreams;
+  document.getElementById('s-clients').textContent = totalClients;
+  document.getElementById('s-bw-in').textContent   = fmtBw(totalBwIn);
+  document.getElementById('s-bw-out').textContent  = fmtBw(totalBwOut);
+
+  // Update per-port live count badges in server headers
+  if (configData) {
+    configData.servers.forEach(srv => {
+      const el = document.getElementById(`live-ct-${srv.port}`);
+      if (el) el.textContent = portLiveCount[srv.port] || 0;
+    });
+  }
+
+  const liveEl = document.getElementById('live-streams');
+  if (liveCards.length === 0) {
+    liveEl.innerHTML = '<div class="empty" style="padding:14px"><p style="font-size:10px;color:var(--muted)">No active publishers</p></div>';
+  } else {
+    liveEl.innerHTML = liveCards.map(s => `
+      <div class="live-card ${s.rec ? 'recording' : s.active ? 'streaming' : ''}">
+        <div class="live-card-name">
+          <span>${esc(s.appName)}/${esc(s.name)}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="live-badge ${s.rec ? 'rec' : s.active ? 'on' : 'off'}">${s.rec ? '⏺ REC' : s.active ? 'LIVE' : 'IDLE'}</span>
+            ${s.active ? `<button class="btn btn-red btn-sm" data-app="${esc(s.appName)}" data-name="${esc(s.name)}" onclick="dropPublisher(this.dataset.app,this.dataset.name)" title="Drop publisher — OBS reconnects with updated push config">⏹ Force reconnect</button>` : ''}
+          </div>
+        </div>
+        <div class="live-card-meta">
+          <span>↑ <b>${fmtBw(s.bwIn)}</b></span>
+          <span>↓ <b>${fmtBw(s.bwOut)}</b></span>
+          <span>👁 <b>${s.clients}</b></span>
+          <span>⏱ <b>${fmtTime(s.time)}</b></span>
+        </div>
+      </div>
+    `).join('');
+  }
+}
+
+// ─── Auto-refresh ─────────────────────────────────────────────────────────────
+function startAutoRefresh() {
+  clearInterval(statsTimer);
+  const interval = parseInt(document.getElementById('refresh-interval').value);
+  if (!interval) {
+    document.getElementById('refresh-label').textContent = '';
+    return;
+  }
+  let countdown = interval;
+  const lbl = document.getElementById('refresh-label');
+  statsTimer = setInterval(() => {
+    countdown--;
+    lbl.textContent = `refresh in ${countdown}s`;
+    if (countdown <= 0) {
+      countdown = interval;
+      fetchStats();
+    }
+  }, 1000);
+}
+
+document.getElementById('refresh-interval').addEventListener('change', startAutoRefresh);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function fmtBw(bits) {
+  if (!bits) return '0';
+  if (bits > 1048576) return (bits/1048576).toFixed(1)+'M';
+  if (bits > 1024)    return (bits/1024).toFixed(0)+'K';
+  return bits+'b';
+}
+
+function fmtTime(ms) {
+  if (!ms) return '—';
+  const s = Math.floor(ms/1000);
+  const h = Math.floor(s/3600).toString().padStart(2,'0');
+  const m = Math.floor((s%3600)/60).toString().padStart(2,'0');
+  const sec = (s%60).toString().padStart(2,'0');
+  return `${h}:${m}:${sec}`;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.getElementById('api-url').value = window.location.origin;
+let savedToken; try { savedToken = localStorage.getItem('rtmp-api-token'); } catch(_) {}
+if (savedToken) document.getElementById('api-secret').value = savedToken;
+log('RTMP Control Panel ready', 'ok');
+startAutoRefresh();
+loadAll();
+</script>
+</body>
+</html>
