@@ -488,3 +488,7 @@ This is why the **⏹ Force Reconnect** button exists: it uses the nginx-rtmp co
 ## License
 
 MIT — free to use, modify, and distribute.
+
+---
+
+Built with the help of [Claude](https://claude.ai) by Anthropic.
