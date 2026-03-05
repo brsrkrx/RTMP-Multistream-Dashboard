@@ -30,8 +30,8 @@ The installer will ask a few questions before it begins:
 |---|---|---|
 | Install directory | `/opt/rtmp-control` | Where the files are deployed |
 | API port | `8088` | Port the dashboard is served on |
-| API secret token | *(none)* | Strongly recommended for internet-facing servers — see [Token Authentication](#option-1--token-authentication-recommended) |
-| LAN-only access | No | Blocks internet access to the dashboard — see [LAN-Only Mode](#option-2--lan-only-mode) |
+| API secret token | **Yes — auto-generated** | A cryptographically secure token is generated automatically. Copy it when shown — you will need it to log in. See [Token Authentication](#option-1--token-authentication-recommended) |
+| LAN-only access | **Yes** | Restricts the dashboard to your local network by default. See [LAN-Only Mode](#option-2--lan-only-mode) |
 | RTMP port | `1935` | Port OBS connects to |
 | nginx HTTP port | `80` | Port for the nginx stat endpoint |
 
@@ -266,11 +266,13 @@ By default the API has **no authentication** and is accessible to anyone who can
 
 ### Option 1 — Token Authentication (Recommended)
 
-The installer will offer to set a secret token during setup. It will offer to auto-generate a cryptographically secure token for you (recommended):
+Token authentication is **enabled by default** during install. A cryptographically secure token is auto-generated and shown once:
 
 ```
-Auto-generate a secure token? [Y/n]: Y
+Set an API secret token? [Y/n]: (press Enter)
+Auto-generate a secure token? [Y/n]: (press Enter)
 → Generated: a3f8c2e1b7d94f2a6e3c8b1d5f7a2e4c9f1b3d5e7a2c4f6b8d0e2a4c6f8b0d2
+  Copy this token — you will need it to access the dashboard.
 ```
 
 Copy and save this token somewhere safe — you will need to enter it in the dashboard's **Token** field the first time you open it. The token is saved in your browser's `localStorage` after a successful use, so you only need to enter it once per browser.
@@ -291,7 +293,7 @@ sudo systemctl restart rtmp-control
 
 LAN-only mode restricts the dashboard to connections from your local network (private IP ranges: `10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`) and the server itself. All connections from public internet IPs are rejected with a `403`.
 
-**During install:** the installer asks *"Restrict dashboard access to local network only?"* — answering `y` enables it from the start.
+**During install:** the installer asks *"Restrict dashboard access to local network only?"* — it is enabled by default. Press Enter to accept, or type `n` to disable it.
 
 **From the dashboard:** open the **Access Control** widget in the sidebar. The toggle takes effect immediately — no restart required. A confirmation dialog appears when enabling, since enabling LAN-only from a remote (internet) connection will lock you out on the next request.
 
@@ -485,6 +487,9 @@ LAN-only mode is enabled and you are connecting from a public IP. Access the das
 
 **"Stat unavailable"**
 The API cannot reach `http://localhost/stat`. Make sure you have added the `/stat` location block to your nginx config with `server_name localhost;` and reloaded nginx. Confirm it works with `curl http://localhost/stat`.
+
+**`nginx: [emerg] unknown directive "rtmp_stat"` after install**
+The RTMP module is not being loaded by nginx. This can happen if you are using a generic or non-Ubuntu nginx.conf that does not include `/etc/nginx/modules-enabled/*.conf`. The installer detects this and adds a `load_module modules/ngx_rtmp_module.so;` line directly to nginx.conf. If you replaced nginx.conf after running the installer, re-run the installer or add the line manually at the very top of your nginx.conf.
 
 **Toggle switches revert after clicking**
 This usually means the API returned an error. Check the **Activity Log** in the dashboard sidebar for the error message.
