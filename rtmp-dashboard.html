@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RTMP Control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📡</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <style>
@@ -412,6 +413,15 @@ input.url-input:focus { border-color: var(--teal); }
 
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
+.lan-only-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.lan-only-label { font-size: 11px; }
+.lan-only-status { font-size: 10px; color: var(--text2); line-height: 1.4; }
+
 .stat-cell {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -726,8 +736,8 @@ input.secret-input:focus { border-color: var(--teal); }
     <div class="widget">
       <div class="widget-title">Live Stats</div>
       <div class="stat-grid">
-        <div class="stat-cell"><span class="val" id="s-streams">—</span><span class="lbl">Streams </span></div>
-        <div class="stat-cell"><span class="val" id="s-clients">—</span><span class="lbl">Viewers</span></div>
+        <div class="stat-cell"><span class="val" id="s-streams">—</span><span class="lbl">Incoming stream</span></div>
+        <div class="stat-cell"><span class="val" id="s-clients">—</span><span class="lbl">Output(s)</span></div>
         <div class="stat-cell"><span class="val" id="s-bw-in">—</span><span class="lbl">Bandwidth In</span></div>
         <div class="stat-cell"><span class="val" id="s-bw-out">—</span><span class="lbl">Bandwidth Out</span></div>
       </div>
@@ -752,6 +762,18 @@ input.secret-input:focus { border-color: var(--teal); }
         </select>
       </div>
       <button class="btn btn-amber btn-sm" onclick="reloadNginx()" style="width:100%;justify-content:center;">⟳ Reload nginx now</button>
+    </div>
+
+    <div class="widget">
+      <div class="widget-title">Access Control</div>
+      <div class="lan-only-row">
+        <span class="lan-only-label">LAN-only access</span>
+        <label class="push-toggle">
+          <input type="checkbox" id="lan-only-toggle" onchange="setLanOnly(this.checked)">
+          <span class="push-toggle-track"></span>
+        </label>
+      </div>
+      <div id="lan-only-status" class="lan-only-status"></div>
     </div>
 
     <div class="widget">
@@ -830,8 +852,14 @@ function setConn(ok, label) {
 async function loadAll() {
   log('Loading config from API…');
   try {
-    // Fetch config and stats in parallel
-    const [r] = await Promise.all([apiFetch('/api/config'), fetchStats()]);
+    // Fetch config, stats, and LAN-only setting in parallel
+    const [r] = await Promise.all([apiFetch('/api/config'), fetchStats(), loadLanOnly()]);
+    if (r.status === 401) {
+      const msg = apiToken()
+        ? 'Wrong API token — the token you entered was rejected.'
+        : 'This dashboard requires an API token. Enter it in the Token field above and click Load.';
+      throw Object.assign(new Error(msg), { status: 401 });
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
@@ -843,8 +871,11 @@ async function loadAll() {
     log(`Loaded ${data.servers.length} server(s)`, 'ok');
   } catch(e) {
     setConn(false, 'error');
-    log(`Config load failed: ${e.message}`, 'err');
-    document.getElementById('servers-container').innerHTML = `<div class="empty"><div class="icon">⚠️</div><p>${esc(e.message)}<br><br>Is <code>rtmp-api.py</code> running with sudo?</p></div>`;
+    log(e.message, 'err');
+    const hint = e.status === 401
+      ? 'Enter the token in the <b>Token</b> field at the top of the page and click <b>Load</b>.'
+      : 'Is <code>rtmp-api.py</code> running with sudo?';
+    document.getElementById('servers-container').innerHTML = `<div class="empty"><div class="icon">⚠️</div><p>${esc(e.message)}<br><br>${hint}</p></div>`;
   }
 }
 
@@ -1271,6 +1302,59 @@ async function reloadNginx() {
   }
 }
 
+// ─── LAN-only access control ─────────────────────────────────────────────────
+async function loadLanOnly() {
+  try {
+    const r = await apiFetch('/api/lan_only');
+    if (!r.ok) return;
+    const data = await r.json();
+    renderLanOnly(data.lan_only);
+  } catch(_) {}
+}
+
+function renderLanOnly(enabled) {
+  const cb  = document.getElementById('lan-only-toggle');
+  const msg = document.getElementById('lan-only-status');
+  cb.checked = enabled;
+  if (enabled) {
+    msg.textContent = 'Internet access blocked. Only local network addresses can reach the dashboard.';
+    msg.style.color = 'var(--teal)';
+  } else {
+    msg.textContent = 'Dashboard is reachable from the internet.';
+    msg.style.color = 'var(--text2)';
+  }
+}
+
+async function setLanOnly(enabled) {
+  if (enabled) {
+    const ok = confirm(
+      'Enable LAN-only access?\n\n' +
+      'This will immediately block all connections from outside your local network. ' +
+      'If you are accessing this dashboard remotely (e.g. via internet/VPN into a cloud server), ' +
+      'you will be locked out and will need SSH access to disable it.\n\n' +
+      'Proceed?'
+    );
+    if (!ok) {
+      document.getElementById('lan-only-toggle').checked = false;
+      return;
+    }
+  }
+  try {
+    const r = await apiFetch('/api/lan_only', {
+      method: 'POST',
+      body: JSON.stringify({ enabled })
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderLanOnly(data.lan_only);
+    log(`LAN-only access ${data.lan_only ? 'enabled' : 'disabled'}`, data.lan_only ? 'warn' : 'ok');
+    toast(data.lan_only ? '⚠ LAN-only access enabled' : '✓ LAN-only access disabled', 4000);
+  } catch(e) {
+    log(`LAN-only toggle failed: ${e.message}`, 'err');
+    document.getElementById('lan-only-toggle').checked = !enabled;
+  }
+}
+
 // ─── Drop publisher ───────────────────────────────────────────────────────────
 async function dropPublisher(appName, name) {
   log(`Dropping publisher ${appName}/${name}…`, 'warn');
@@ -1339,7 +1423,7 @@ function processStats(xml) {
   });
 
   document.getElementById('s-streams').textContent = totalStreams;
-  document.getElementById('s-clients').textContent = totalClients;
+  document.getElementById('s-clients').textContent = Math.max(0, totalClients - totalStreams);
   document.getElementById('s-bw-in').textContent   = fmtBw(totalBwIn);
   document.getElementById('s-bw-out').textContent  = fmtBw(totalBwOut);
 
@@ -1365,9 +1449,9 @@ function processStats(xml) {
           </div>
         </div>
         <div class="live-card-meta">
-          <span>↑ <b>${fmtBw(s.bwIn)}</b></span>
-          <span>↓ <b>${fmtBw(s.bwOut)}</b></span>
-          <span>👁 <b>${s.clients}</b></span>
+          <span>↓ <b>${fmtBw(s.bwIn)}</b></span>
+          <span>↑ <b>${fmtBw(s.bwOut)}</b></span>
+          <span>👁 <b>${Math.max(0, s.clients - 1)}</b></span>
           <span>⏱ <b>${fmtTime(s.time)}</b></span>
         </div>
       </div>

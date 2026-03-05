@@ -44,7 +44,7 @@ echo -e "   • Install Python 3 + Flask"
 echo -e "   • Deploy the dashboard files to /opt/rtmp-control"
 echo -e "   • Configure nginx with /stat and /control endpoints"
 echo -e "   • Create and enable a systemd service"
-echo -e "   • (Optionally) set an API secret token. HIGHLY recommended\n"
+echo -e "   • (Optionally) set an API secret token. HIGHLY recommended"
 echo -e "   • Press Enter when asked for input to accept the standard settings\n"
 echo -e "${YELLOW}  Your existing nginx.conf will be backed up before any changes.${RESET}\n"
 
@@ -57,41 +57,58 @@ header "Configuration"
 
 # Install directory
 INSTALL_DIR="/opt/rtmp-control"
-ask "Install directory [${INSTALL_DIR}]:"
+ask "Install directory [${INSTALL_DIR}] (press Enter for default):"
 read -rp "  > " INPUT_DIR
 INSTALL_DIR="${INPUT_DIR:-$INSTALL_DIR}"
 
 # API port
 API_PORT="8088"
-ask "API port [${API_PORT}]:"
+ask "API port [${API_PORT}] (press Enter for default):"
 read -rp "  > " INPUT_PORT
 API_PORT="${INPUT_PORT:-$API_PORT}"
 
 # API secret
 API_SECRET=""
-ask "Set an API secret token? (recommended if server is internet-facing) [y/N]:"
+ask "Set an API secret token? (recommended if server is internet-facing) [Y/n]:"
 read -rp "  > " SET_SECRET
-if [[ "${SET_SECRET,,}" == "y" ]]; then
-  while true; do
-    ask "Enter secret token (min 8 chars, no spaces):"
-    read -rsp "  > " API_SECRET; echo
-    if [[ ${#API_SECRET} -ge 8 && "$API_SECRET" != *" "* ]]; then
-      break
-    fi
-    warn "Token must be at least 8 characters with no spaces. Try again."
-  done
-  ok "Secret token set."
+if [[ "${SET_SECRET,,}" != "n" ]]; then
+  ask "Auto-generate a secure token? [Y/n]:"
+  read -rp "  > " AUTO_TOKEN
+  if [[ "${AUTO_TOKEN,,}" != "n" ]]; then
+    API_SECRET="$(openssl rand -hex 24)"
+    ok "Generated token: ${API_SECRET}"
+    echo -e "  ${YELLOW}${BOLD}Copy this token — you will need it to access the dashboard.${RESET}"
+  else
+    while true; do
+      ask "Enter secret token (min 16 chars, no spaces):"
+      read -rsp "  > " API_SECRET; echo
+      if [[ ${#API_SECRET} -ge 16 && "$API_SECRET" != *" "* ]]; then
+        break
+      fi
+      warn "Token must be at least 16 characters with no spaces. Try again."
+    done
+    ok "Secret token set."
+  fi
+fi
+
+# LAN-only access
+LAN_ONLY_VAL="False"
+ask "Restrict dashboard access to local network only? (blocks internet access) [Y/n]:"
+read -rp "  > " SET_LAN_ONLY
+if [[ "${SET_LAN_ONLY,,}" != "n" ]]; then
+  LAN_ONLY_VAL="True"
+  ok "LAN-only access enabled."
 fi
 
 # RTMP listen port
 RTMP_PORT="1935"
-ask "RTMP listen port for the default server block [${RTMP_PORT}]:"
+ask "RTMP listen port for the default server block [${RTMP_PORT}] (press Enter for default):"
 read -rp "  > " INPUT_RTMP
 RTMP_PORT="${INPUT_RTMP:-$RTMP_PORT}"
 
 # HTTP port
 HTTP_PORT="80"
-ask "nginx HTTP port [${HTTP_PORT}]:"
+ask "nginx HTTP port [${HTTP_PORT}] (press Enter for default):"
 read -rp "  > " INPUT_HTTP
 HTTP_PORT="${INPUT_HTTP:-$HTTP_PORT}"
 
@@ -103,6 +120,7 @@ info "Summary:"
 echo "   Install dir  : ${INSTALL_DIR}"
 echo "   API port     : ${API_PORT}"
 echo "   API secret   : ${API_SECRET:+(set)}"
+echo "   LAN only     : ${LAN_ONLY_VAL}"
 echo "   RTMP port    : ${RTMP_PORT}"
 echo "   HTTP port    : ${HTTP_PORT}"
 echo "   nginx.conf   : ${NGINX_CONF}"
@@ -195,7 +213,11 @@ if [[ -f "${API_FILE}" ]]; then
   # Escape single quotes in secret for sed
   ESCAPED_SECRET="${API_SECRET//\'/\'}"
   sed -i "s|^API_SECRET\s*=.*|API_SECRET  = \"${ESCAPED_SECRET}\"|" "${API_FILE}"
-  ok "rtmp-api.py configured (port=${API_PORT}, secret=${API_SECRET:+set})"
+  sed -i "s|^LAN_ONLY\s*=.*|LAN_ONLY     = ${LAN_ONLY_VAL}|" "${API_FILE}"
+  # Write rtmp-settings.json so it matches the install choice and takes precedence at runtime
+  LAN_ONLY_JSON="false"; [[ "${LAN_ONLY_VAL}" == "True" ]] && LAN_ONLY_JSON="true"
+  echo "{\"lan_only\": ${LAN_ONLY_JSON}}" > "${INSTALL_DIR}/rtmp-settings.json"
+  ok "rtmp-api.py configured (port=${API_PORT}, secret=${API_SECRET:+set}, lan_only=${LAN_ONLY_VAL})"
 fi
 
 # =============================================================================
@@ -218,11 +240,11 @@ grep -q 'rtmp_stat' "${NGINX_CONF}" && HAS_STAT=true
 
 # Check if load_module line exists
 HAS_LOAD=false
-grep -q 'ngx_rtmp_module' "${NGINX_CONF}" && HAS_LOAD=false  # module dir handles it on Ubuntu
+grep -q 'ngx_rtmp_module' "${NGINX_CONF}" && HAS_LOAD=true
 ls /etc/nginx/modules-enabled/ 2>/dev/null | grep -q rtmp && HAS_LOAD=true
 
 if $HAS_LOAD; then
-  ok "ngx_rtmp_module already referenced in modules-enabled/"
+  ok "ngx_rtmp_module already referenced — skipping module setup"
 else
   # Check if modules-enabled dir exists (standard Ubuntu nginx)
   if [[ -d /etc/nginx/modules-enabled ]]; then
@@ -232,12 +254,21 @@ else
       ok "Created ${RTMP_CONF} to load RTMP module"
     fi
   else
-    # Fallback: prepend to nginx.conf
-    if ! grep -q 'ngx_rtmp_module' "${NGINX_CONF}"; then
-      sed -i '1s/^/load_module modules\/ngx_rtmp_module.so;\n/' "${NGINX_CONF}"
-      ok "Prepended load_module directive to nginx.conf"
-    fi
+    # No modules-enabled dir — prepend load_module directly to nginx.conf
+    sed -i '1s/^/load_module modules\/ngx_rtmp_module.so;\n/' "${NGINX_CONF}"
+    ok "Prepended load_module directive to nginx.conf"
   fi
+fi
+
+# Ensure nginx.conf actually includes the modules-enabled directory.
+# A non-Ubuntu or generic nginx.conf may omit this include, causing
+# "unknown directive" errors even when the .conf file exists.
+if [[ -d /etc/nginx/modules-enabled ]] && \
+   ! grep -qE 'include.*modules-enabled' "${NGINX_CONF}" && \
+   ! grep -q 'ngx_rtmp_module' "${NGINX_CONF}"; then
+  info "nginx.conf does not include modules-enabled — adding load_module directly…"
+  sed -i '1s/^/load_module modules\/ngx_rtmp_module.so;\n/' "${NGINX_CONF}"
+  ok "Added load_module directive to nginx.conf"
 fi
 
 # ── Ensure worker_processes 1 ─────────────────────────────────────────────────

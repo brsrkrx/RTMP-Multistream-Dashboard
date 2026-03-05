@@ -14,6 +14,7 @@ import re
 import os
 import sys
 import json
+import ipaddress
 import subprocess
 import threading
 import urllib.request
@@ -26,8 +27,41 @@ NGINX_CONF   = "/etc/nginx/nginx.conf"
 NGINX_STAT   = "http://localhost/stat"   # internal stat URL
 API_PORT     = 8088
 API_SECRET   = ""   # optional: set a token to protect the API, e.g. "mysecret"
+LAN_ONLY     = False  # restrict dashboard access to LAN/localhost only
 CORS_ORIGIN  = ""   # "" = same-origin only (recommended); "*" = allow all origins
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── LAN-only settings persistence ─────────────────────────────────────────────
+
+_SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rtmp-settings.json")
+
+
+def _load_settings():
+    global LAN_ONLY
+    if os.path.exists(_SETTINGS_FILE):
+        try:
+            with open(_SETTINGS_FILE) as f:
+                s = json.load(f)
+            LAN_ONLY = bool(s.get("lan_only", LAN_ONLY))
+        except Exception:
+            pass
+
+
+def _save_settings():
+    with open(_SETTINGS_FILE, "w") as f:
+        json.dump({"lan_only": LAN_ONLY}, f)
+
+
+_load_settings()
+
+
+def _is_lan_ip(ip):
+    """Return True if ip is a loopback or private (RFC-1918/4193) address."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        return addr.is_private or addr.is_loopback
+    except ValueError:
+        return False
 
 conf_lock = threading.Lock()  # guards all nginx.conf read/write sequences
 
@@ -57,6 +91,12 @@ def cors(response):
 @app.after_request
 def after(response):
     return cors(response)
+
+
+@app.before_request
+def check_lan_access():
+    if LAN_ONLY and not _is_lan_ip(request.remote_addr or ""):
+        return jsonify({"error": "Access restricted to local network"}), 403
 
 
 @app.route("/api/options", methods=["OPTIONS"])
@@ -623,6 +663,24 @@ def api_test_nginx():
     return jsonify({"ok": ok, "output": out})
 
 
+# ── LAN-only access control ───────────────────────────────────────────────────
+
+@app.route("/api/lan_only", methods=["GET"])
+@require_secret
+def api_get_lan_only():
+    return jsonify({"lan_only": LAN_ONLY})
+
+
+@app.route("/api/lan_only", methods=["POST"])
+@require_secret
+def api_set_lan_only():
+    global LAN_ONLY
+    data = request.get_json(force=True)
+    LAN_ONLY = bool(data.get("enabled", False))
+    _save_settings()
+    return jsonify({"lan_only": LAN_ONLY})
+
+
 # ── nginx helpers ─────────────────────────────────────────────────────────────
 
 def nginx_test():
@@ -661,5 +719,6 @@ if __name__ == "__main__":
         print(f"Auth        : X-API-Token required")
     else:
         print("Auth        : NONE (set API_SECRET to protect this endpoint!)")
+    print(f"LAN only    : {'YES — internet access blocked' if LAN_ONLY else 'no (accessible from internet)'}")
     print()
     app.run(host="0.0.0.0", port=API_PORT, debug=False, threaded=True)
