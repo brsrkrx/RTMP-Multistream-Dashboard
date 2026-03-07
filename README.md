@@ -1,8 +1,9 @@
 # RTMP Control Panel
 
-A web-based dashboard for managing an **nginx-rtmp-module** server on Ubuntu. Toggle push destinations live, monitor stream stats, and manage your nginx RTMP config — all from a browser.
-
+A web-based dashboard for managing an **nginx-rtmp-module** server on Ubuntu. Add, edit and toggle push destinations live, monitor stream stats — all from a browser.
 ---
+Screenshot of the dashboard. Names and URLs of the active outputs have been redacted for privacy:
+![alt text](<Screenshot RTMP Dashboard.png>)
 
 ## What's Included
 
